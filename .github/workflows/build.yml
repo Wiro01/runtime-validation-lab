@@ -1,0 +1,156 @@
+name: Public Validation Runner
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-public-repo:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout public repository only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce exact public allowlist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $allowed = @('.github/workflows/build.yml','.gitignore','README.md')
+          $tracked = @(& git ls-files)
+          $extra = @($tracked | Where-Object { $_ -notin $allowed })
+          $missing = @($allowed | Where-Object { $_ -notin $tracked })
+          if ($extra.Count -gt 0) { throw ('Fail closed: unexpected tracked path: ' + ($extra -join ', ')) }
+          if ($missing.Count -gt 0) { throw ('Fail closed: required public path missing: ' + ($missing -join ', ')) }
+          foreach ($f in $tracked) {
+            if ((Get-Item -LiteralPath $f).Length -gt 262144) {
+              throw ('Fail closed: tracked file too large: ' + $f)
+            }
+          }
+
+      - name: Verify deny-policy integrity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $policy = Get-Content -LiteralPath '.gitignore'
+          $required = @(
+            ('*.m'+'q5'),('*.m'+'qh'),('*.e'+'x5'),('*.e'+'x4'),
+            '*.zip','*.7z','*.rar','*.key','*.pem','*.pfx','*.p12',
+            '*.kdbx','*.env','.env*',('*creden'+'tial*'),
+            ('*sec'+'ret*'),('*to'+'ken*'),'private/','source/','payload/',
+            'build/','output/','artifacts/','results/'
+          )
+          foreach ($rule in $required) {
+            if ($rule -notin $policy) { throw 'Fail closed: deny-policy rule missing.' }
+          }
+          if (@($policy | Where-Object { $_.TrimStart().StartsWith('!') }).Count -gt 0) {
+            throw 'Fail closed: deny-policy exceptions are not allowed.'
+          }
+      - name: Fail closed on prohibited files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prohibited = @(
+            ('*.m'+'q5'),('*.m'+'qh'),('*.e'+'x5'),('*.e'+'x4'),
+            '*.zip','*.7z','*.rar','*.key','*.pem','*.pfx',
+            '*.env',('*.sec'+'ret'),'*.log','*.dmp','*.bak'
+          )
+          foreach ($pattern in $prohibited) {
+            $hits = @(Get-ChildItem -Path . -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -notmatch '\\.git\\' })
+            if ($hits.Count -gt 0) { throw 'Fail closed: prohibited file type detected.' }
+          }
+
+      - name: Fail closed on prohibited history paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $badEnds = @(
+            ('.m'+'q5'),('.m'+'qh'),('.e'+'x5'),('.e'+'x4'),
+            '.zip','.7z','.rar','.key','.pem','.pfx','.env','.log','.dmp','.bak'
+          )
+          $objects = @(& git rev-list --objects --all)
+          foreach ($line in $objects) {
+            $i = $line.IndexOf(' ')
+            if ($i -lt 0) { continue }
+            $path = $line.Substring($i + 1)
+          foreach ($end in $badEnds) {
+              if ($path.EndsWith($end,[StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Fail closed: prohibited path exists in repository history.'
+              }
+            }
+          }
+
+      - name: Verify pinned actions only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lines = Get-Content -LiteralPath '.github/workflows/build.yml'
+          foreach ($line in $lines) {
+            if ($line -match '^\s*uses:\s*([^@\s]+)@([^\s]+)\s*$') {
+              $action = $Matches[1]
+              $ref = $Matches[2]
+              if ($action -ne 'actions/checkout') { throw 'Fail closed: unapproved action dependency.' }
+              if ($ref -notmatch '^[0-9a-fA-F]{40}$') { throw 'Fail closed: action is not pinned to a commit SHA.' }
+            }
+          }
+
+      - name: Verify public commit identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rows = @(& git log --format='%an%x09%ae')
+          foreach ($row in $rows) {
+            $parts = $row -split "`t",2
+            if ($parts.Count -ne 2) { throw 'Fail closed: malformed commit identity.' }
+            $name = $parts[0]
+            $mail = $parts[1]
+            if ($mail -notmatch '(^noreply@github\.com$|@users\.noreply\.github\.com$)') {
+              throw 'Fail closed: public commit email is not privacy-safe.'
+            }
+            if ($name -match (('(?i)wiras'+'to')+'|'+('(?i)wir'+'nug'))) {
+              throw 'Fail closed: personal commit identity detected.'
+            }
+          }
+
+      - name: Fail closed on sensitive fingerprints
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $patterns = @(
+            ('(?i)meta'+'trader'),('(?i)mq'+'l5'),('(?i)for'+'ex'),
+            ('(?i)bro'+'ker'),('(?i)tra'+'ding'),('(?i)reco'+'very'),
+            ('(?i)adap'+'tive'),
+            ([regex]::Escape(('C:'+'\'+'Users'+'\'))),('(?i)wiras'+'to'),('(?i)wir'+'nug'),
+            '\b\d{8,12}\b','\b(?:\d{1,3}\.){3}\d{1,3}\b',
+            '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}',
+            'gh[pousr]_[A-Za-z0-9_]{20,}','AKIA[0-9A-Z]{16}',
+            'AIza[0-9A-Za-z_-]{30,}',
+            (('(?i)\bpass'+'word\b\s*[:=]\s*["'']?[^\s"'']{8,}')),
+            (('(?i)\bto'+'ken\b\s*[:=]\s*["'']?[^\s"'']{8,}')),
+            (('(?i)\bsec'+'ret\b\s*[:=]\s*["'']?[^\s"'']{8,}')),
+            ('-----BEGIN [A-Z0-9 ]+'+('PRI'+'VATE')+' KEY-----')
+          )
+          $tracked = @(& git ls-files)
+          $scan = @($tracked | Where-Object { $_ -ne '.gitignore' })
+          foreach ($f in $scan) {
+            $text = Get-Content -LiteralPath $f -Raw -ErrorAction Stop
+            foreach ($p in $patterns) {
+              if ($text -match $p) {
+                throw ('Fail closed: sensitive fingerprint detected in ' + $f)
+              }
+            }
+          }
+
+      - name: Generic harmless runner smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host 'Public validation runner OK.'
+          Write-Host ('OS=' + $env:RUNNER_OS)
