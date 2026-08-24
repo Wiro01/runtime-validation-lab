@@ -28,9 +28,19 @@ jobs:
           /tmp/gradle-8.9/bin/gradle -p src/wro-monitor-android :app:assembleDebug --no-daemon
           cp src/wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk WRO-Monitor-Android.apk
           sha256sum WRO-Monitor-Android.apk
-      - name: Publish temporary APK release
+      - name: Publish transport branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="wro-monitor-apk-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" WRO-Monitor-Android.apk --repo Wiro01/runtime-validation-lab --target "$GITHUB_SHA" --title "WRO Monitor Android ${GITHUB_RUN_NUMBER}" --notes "Temporary APK build artifact. No pairing secret embedded."
+          base64 -w0 WRO-Monitor-Android.apk > WRO-Monitor-Android.apk.b64
+          mkdir /tmp/apk-transport
+          cp WRO-Monitor-Android.apk.b64 /tmp/apk-transport/
+          cd /tmp/apk-transport
+          git init
+          git checkout -b wro-monitor-apk-artifact
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add WRO-Monitor-Android.apk.b64
+          git commit -m 'Publish WRO Monitor APK transport'
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/Wiro01/runtime-validation-lab.git"
+          git push --force origin wro-monitor-apk-artifact
