@@ -36,11 +36,12 @@ jobs:
           mkdir /tmp/apk-transport
           cp WRO-Monitor-Android.apk.b64 /tmp/apk-transport/
           cd /tmp/apk-transport
+          split -b 3500 -d -a 2 WRO-Monitor-Android.apk.b64 WRO-Monitor-Android.apk.b64.part-
           git init
           git checkout -b wro-monitor-apk-artifact
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add WRO-Monitor-Android.apk.b64
+          git add .
           git commit -m 'Publish WRO Monitor APK transport'
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/Wiro01/runtime-validation-lab.git"
           git push --force origin wro-monitor-apk-artifact
