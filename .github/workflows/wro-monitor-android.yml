@@ -2,31 +2,35 @@ name: WRO Monitor Android APK
 on:
   push:
     branches: [wro-monitor-android-v1]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Install Android SDK 35
+      - name: Fetch source without marketplace actions
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Install Gradle 8.9
+          git clone --depth 1 --branch wro-monitor-android-v1 https://github.com/Wiro01/runtime-validation-lab.git src
+      - name: Prepare Java Android and Gradle
         run: |
+          java -version
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
           curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
-          echo '/tmp/gradle-8.9/bin' >> "$GITHUB_PATH"
-      - name: Build debug APK
-        run: gradle -p wro-monitor-android :app:assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
-        with:
-          name: WRO-Monitor-Android
-          path: wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Build APK
+        run: |
+          /tmp/gradle-8.9/bin/gradle -p src/wro-monitor-android :app:assembleDebug --no-daemon
+          cp src/wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk WRO-Monitor-Android.apk
+          sha256sum WRO-Monitor-Android.apk
+      - name: Publish temporary APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="wro-monitor-apk-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" WRO-Monitor-Android.apk --repo Wiro01/runtime-validation-lab --target "$GITHUB_SHA" --title "WRO Monitor Android ${GITHUB_RUN_NUMBER}" --notes "Temporary APK build artifact. No pairing secret embedded."
