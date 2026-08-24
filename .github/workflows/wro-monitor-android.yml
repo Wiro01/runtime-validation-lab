@@ -39,10 +39,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           base64 -w0 WRO-Monitor-Android.apk > WRO-Monitor-Android.apk.b64
+          fold -w 500 WRO-Monitor-Android.apk.b64 > WRO-Monitor-Android.apk.b64.lines
+          sha256sum WRO-Monitor-Android.apk > WRO-Monitor-Android.apk.sha256
           mkdir /tmp/apk-transport
-          cp WRO-Monitor-Android.apk.b64 /tmp/apk-transport/
+          cp WRO-Monitor-Android.apk.b64 WRO-Monitor-Android.apk.b64.lines WRO-Monitor-Android.apk.sha256 /tmp/apk-transport/
           cd /tmp/apk-transport
-          split -b 3500 -d -a 2 WRO-Monitor-Android.apk.b64 WRO-Monitor-Android.apk.b64.part-
           git init
           git checkout -b wro-monitor-apk-artifact
           git config user.name github-actions
