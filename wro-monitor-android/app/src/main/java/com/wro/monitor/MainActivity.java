@@ -35,16 +35,31 @@ public class MainActivity extends Activity {
         ByteArrayOutputStream out=new ByteArrayOutputStream(); byte[] buf=new byte[4096]; int n;
         while((n=gz.read(buf))>0) out.write(buf,0,n); gz.close(); return out.toString("UTF-8");
     }
+    private static String findPacket(String topic,String since) throws Exception {
+        URLConnection c=new URL("https://ntfy.sh/"+topic+"/json?poll=1&since="+since+"&_="+System.currentTimeMillis()).openConnection();
+        c.setUseCaches(false); c.setConnectTimeout(6000); c.setReadTimeout(6000);
+        BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8));
+        String line,msg=null;
+        while((line=br.readLine())!=null){
+            if(line.trim().isEmpty())continue;
+            JSONObject o=new JSONObject(line);
+            if("message".equals(o.optString("event"))){
+                String m=o.optString("message","");
+                if(m.startsWith("v1.")) msg=m;
+            }
+        }
+        br.close(); return msg;
+    }
 
     public class Bridge {
         @JavascriptInterface public String getLiveState(String secret) {
             try {
                 String topic="wro-"+hex(sha("topic|"+secret)).substring(0,24);
-                URLConnection c=new URL("https://ntfy.sh/"+topic+"/json?poll=1&since=latest&_="+System.currentTimeMillis()).openConnection();
-                c.setUseCaches(false); c.setConnectTimeout(6000); c.setReadTimeout(6000);
-                BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8));
-                String line,msg=null; while((line=br.readLine())!=null){ if(line.trim().isEmpty())continue; JSONObject o=new JSONObject(line); if("message".equals(o.optString("event"))) msg=o.optString("message",null); } br.close();
-                if(msg==null) throw new Exception("no snapshot"); String[] p=msg.split("\\."); if(p.length!=4||!"v1".equals(p[0]))throw new Exception("bad packet");
+                String msg=findPacket(topic,"30m");
+                if(msg==null) msg=findPacket(topic,"2h");
+                if(msg==null) throw new Exception("no valid snapshot");
+                String[] p=msg.split("\\.");
+                if(p.length!=4||!"v1".equals(p[0]))throw new Exception("bad packet");
                 byte[] iv=b64u(p[1]),ct=b64u(p[2]),tag=b64u(p[3]); byte[] mk=sha("mac|"+secret);
                 Mac mac=Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(mk,"HmacSHA256")); mac.update(iv); byte[] calc=mac.doFinal(ct);
                 if(!MessageDigest.isEqual(tag,calc)) throw new Exception("auth failed");
