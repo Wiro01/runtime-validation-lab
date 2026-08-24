@@ -28,6 +28,12 @@ jobs:
           /tmp/gradle-8.9/bin/gradle -p src/wro-monitor-android :app:assembleDebug --no-daemon
           cp src/wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk WRO-Monitor-Android.apk
           sha256sum WRO-Monitor-Android.apk
+      - name: Publish latest release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete wro-monitor-chat-latest --repo Wiro01/runtime-validation-lab --cleanup-tag --yes || true
+          gh release create wro-monitor-chat-latest WRO-Monitor-Android.apk --repo Wiro01/runtime-validation-lab --target wro-monitor-android-v1 --title 'WRO Monitor Android Latest' --notes 'Latest WRO Monitor Android APK for direct installation.'
       - name: Publish transport branch
         env:
           GH_TOKEN: ${{ github.token }}
