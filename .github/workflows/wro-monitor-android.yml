@@ -2,9 +2,9 @@ name: WRO Monitor Android APK
 on:
   push:
     branches: [wro-monitor-android-v1]
-    paths:
-      - 'wro-monitor-android/**'
-      - '.github/workflows/wro-monitor-android.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
