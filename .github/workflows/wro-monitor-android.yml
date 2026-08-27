@@ -1,7 +1,7 @@
-name: WRO Monitor Android APK
+name: WRO Monitor Android APK v2
 on:
   push:
-    branches: [wro-monitor-android-v1]
+    branches: [wro-monitor-android-v2]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ jobs:
     steps:
       - name: Fetch source without marketplace actions
         run: |
-          git clone --depth 1 --branch wro-monitor-android-v1 https://github.com/Wiro01/runtime-validation-lab.git src
+          git clone --depth 1 --branch wro-monitor-android-v2 https://github.com/Wiro01/runtime-validation-lab.git src
       - name: Prepare Java Android and Gradle
         run: |
           java -version
@@ -26,29 +26,29 @@ jobs:
       - name: Build APK
         run: |
           /tmp/gradle-8.9/bin/gradle -p src/wro-monitor-android :app:assembleDebug --no-daemon
-          cp src/wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk WRO-Monitor-Android.apk
-          sha256sum WRO-Monitor-Android.apk
+          cp src/wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk WRO-Monitor-Android-v2.apk
+          sha256sum WRO-Monitor-Android-v2.apk
       - name: Publish latest release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete wro-monitor-chat-latest --repo Wiro01/runtime-validation-lab --cleanup-tag --yes || true
-          gh release create wro-monitor-chat-latest WRO-Monitor-Android.apk --repo Wiro01/runtime-validation-lab --target wro-monitor-android-v1 --title 'WRO Monitor Android Latest' --notes 'Latest WRO Monitor Android APK for direct installation.'
+          gh release create wro-monitor-chat-latest WRO-Monitor-Android-v2.apk --repo Wiro01/runtime-validation-lab --target wro-monitor-android-v2 --title 'WRO Monitor Android v2' --notes 'WRO Monitor Android v2: full telemetry schema consumer, per-account freshness, robust snapshot filtering.'
       - name: Publish transport branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base64 -w0 WRO-Monitor-Android.apk > WRO-Monitor-Android.apk.b64
-          fold -w 500 WRO-Monitor-Android.apk.b64 > WRO-Monitor-Android.apk.b64.lines
-          sha256sum WRO-Monitor-Android.apk > WRO-Monitor-Android.apk.sha256
+          base64 -w0 WRO-Monitor-Android-v2.apk > WRO-Monitor-Android-v2.apk.b64
+          fold -w 500 WRO-Monitor-Android-v2.apk.b64 > WRO-Monitor-Android-v2.apk.b64.lines
+          sha256sum WRO-Monitor-Android-v2.apk > WRO-Monitor-Android-v2.apk.sha256
           mkdir /tmp/apk-transport
-          cp WRO-Monitor-Android.apk.b64 WRO-Monitor-Android.apk.b64.lines WRO-Monitor-Android.apk.sha256 /tmp/apk-transport/
+          cp WRO-Monitor-Android-v2.apk.b64 WRO-Monitor-Android-v2.apk.b64.lines WRO-Monitor-Android-v2.apk.sha256 /tmp/apk-transport/
           cd /tmp/apk-transport
           git init
           git checkout -b wro-monitor-apk-artifact
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add .
-          git commit -m 'Publish WRO Monitor APK transport'
+          git commit -m 'Publish WRO Monitor Android v2 transport'
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/Wiro01/runtime-validation-lab.git"
           git push --force origin wro-monitor-apk-artifact
