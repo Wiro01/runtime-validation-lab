@@ -7,11 +7,14 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.GZIPInputStream;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -35,37 +38,58 @@ public class MainActivity extends Activity {
         ByteArrayOutputStream out=new ByteArrayOutputStream(); byte[] buf=new byte[4096]; int n;
         while((n=gz.read(buf))>0) out.write(buf,0,n); gz.close(); return out.toString("UTF-8");
     }
-    private static String findPacket(String topic,String since) throws Exception {
+    private static List<String> findPackets(String topic,String since) throws Exception {
         URLConnection c=new URL("https://ntfy.sh/"+topic+"/json?poll=1&since="+since+"&_="+System.currentTimeMillis()).openConnection();
         c.setUseCaches(false); c.setConnectTimeout(6000); c.setReadTimeout(6000);
         BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8));
-        String line,msg=null;
+        ArrayList<String> list=new ArrayList<>(); String line;
         while((line=br.readLine())!=null){
             if(line.trim().isEmpty())continue;
             JSONObject o=new JSONObject(line);
             if("message".equals(o.optString("event"))){
                 String m=o.optString("message","");
-                if(m.startsWith("v1.")) msg=m;
+                if(m.startsWith("v1.")) list.add(m);
             }
         }
-        br.close(); return msg;
+        br.close(); return list;
+    }
+    private static String decrypt(String msg,String secret) throws Exception {
+        String[] p=msg.split("\\.");
+        if(p.length!=4||!"v1".equals(p[0]))throw new Exception("bad packet");
+        byte[] iv=b64u(p[1]),ct=b64u(p[2]),tag=b64u(p[3]),mk=sha("mac|"+secret);
+        Mac mac=Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(mk,"HmacSHA256")); mac.update(iv); byte[] calc=mac.doFinal(ct);
+        if(!MessageDigest.isEqual(tag,calc)) throw new Exception("auth failed");
+        Cipher aes=Cipher.getInstance("AES/CBC/PKCS5Padding");
+        aes.init(Cipher.DECRYPT_MODE,new SecretKeySpec(sha("enc|"+secret),"AES"),new IvParameterSpec(iv));
+        return gunzip(aes.doFinal(ct));
+    }
+    private static String newestSnapshot(String topic,String secret,String since) throws Exception {
+        List<String> packets=findPackets(topic,since);
+        for(int i=packets.size()-1;i>=0;i--){
+            try{
+                String raw=decrypt(packets.get(i),secret);
+                JSONObject o=new JSONObject(raw);
+                String mt=o.optString("message_type","");
+                if(!mt.isEmpty()&&!"WRO_FLEET_SNAPSHOT".equals(mt))continue;
+                JSONArray rows=o.optJSONArray("rows");
+                if(rows!=null&&rows.length()>0)return raw;
+            }catch(Exception ignored){}
+        }
+        return null;
     }
 
     public class Bridge {
         @JavascriptInterface public String getLiveState(String secret) {
             try {
                 String topic="wro-"+hex(sha("topic|"+secret)).substring(0,24);
-                String msg=findPacket(topic,"30m");
-                if(msg==null) msg=findPacket(topic,"2h");
-                if(msg==null) throw new Exception("no valid snapshot");
-                String[] p=msg.split("\\.");
-                if(p.length!=4||!"v1".equals(p[0]))throw new Exception("bad packet");
-                byte[] iv=b64u(p[1]),ct=b64u(p[2]),tag=b64u(p[3]); byte[] mk=sha("mac|"+secret);
-                Mac mac=Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(mk,"HmacSHA256")); mac.update(iv); byte[] calc=mac.doFinal(ct);
-                if(!MessageDigest.isEqual(tag,calc)) throw new Exception("auth failed");
-                Cipher aes=Cipher.getInstance("AES/CBC/PKCS5Padding"); aes.init(Cipher.DECRYPT_MODE,new SecretKeySpec(sha("enc|"+secret),"AES"),new IvParameterSpec(iv));
-                return gunzip(aes.doFinal(ct));
-            } catch(Exception e) { try{return new JSONObject().put("__error",e.getClass().getSimpleName()+": "+e.getMessage()).toString();}catch(Exception x){return "{\"__error\":\"native failure\"}";} }
+                String raw=newestSnapshot(topic,secret,"30m");
+                if(raw==null)raw=newestSnapshot(topic,secret,"2h");
+                if(raw==null)throw new Exception("no valid snapshot");
+                return raw;
+            } catch(Exception e) {
+                try{return new JSONObject().put("__error",e.getClass().getSimpleName()+": "+e.getMessage()).toString();}
+                catch(Exception x){return "{\"__error\":\"native failure\"}";}
+            }
         }
     }
 
