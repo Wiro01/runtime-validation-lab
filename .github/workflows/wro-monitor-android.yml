@@ -28,13 +28,6 @@ jobs:
           /tmp/gradle-8.9/bin/gradle -p src/wro-monitor-android :app:assembleDebug --no-daemon
           cp src/wro-monitor-android/app/build/outputs/apk/debug/app-debug.apk WRO-Monitor-Android-v2.apk
           sha256sum WRO-Monitor-Android-v2.apk
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: WRO-Monitor-Android-v2
-          path: WRO-Monitor-Android-v2.apk
-          if-no-files-found: error
-          retention-days: 7
       - name: Publish latest release asset
         env:
           GH_TOKEN: ${{ github.token }}
