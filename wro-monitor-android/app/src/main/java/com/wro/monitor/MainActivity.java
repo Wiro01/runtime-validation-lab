@@ -24,6 +24,7 @@ public class MainActivity extends Activity {
     private WebView web;
     private final ScheduledExecutorService relayWorker=Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean fetching=new AtomicBoolean(false);
+    private final AtomicBoolean fetchQueued=new AtomicBoolean(false);
     private volatile String activeSecret="";
     private volatile long lastFetchStart=0L;
 
@@ -31,6 +32,8 @@ public class MainActivity extends Activity {
     private static String hex(byte[] b) { StringBuilder x=new StringBuilder(); for(byte v:b)x.append(String.format("%02x",v)); return x.toString(); }
     private static byte[] b64u(String s) { return Base64.decode(s,Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING); }
     private static String gunzip(byte[] raw) throws Exception { GZIPInputStream gz=new GZIPInputStream(new ByteArrayInputStream(raw)); ByteArrayOutputStream out=new ByteArrayOutputStream(); byte[] buf=new byte[4096]; int n; while((n=gz.read(buf))>0)out.write(buf,0,n); gz.close(); return out.toString("UTF-8"); }
+    private static long seq(JSONObject o){ return o==null?0L:o.optLong("fleet_snapshot_sequence",o.optLong("snapshot_sequence",0L)); }
+    private static boolean newer(JSONObject incoming,JSONObject current){ if(current==null)return true; long a=seq(incoming),b=seq(current); if(a!=0L||b!=0L)return a>b; return incoming.optString("generated_at",incoming.optString("timestamp","")).compareTo(current.optString("generated_at",current.optString("timestamp","")))>0; }
 
     private static JSONObject decodePacket(String msg,String secret) throws Exception {
         String[] p=msg.split("\\."); if(p.length!=4||!"v1".equals(p[0]))throw new Exception("bad packet");
@@ -43,7 +46,7 @@ public class MainActivity extends Activity {
         URLConnection c=new URL("https://ntfy.sh/"+topic+"/json?poll=1&since="+since+"&_="+System.currentTimeMillis()).openConnection(); c.setUseCaches(false); c.setConnectTimeout(5000); c.setReadTimeout(5000);
         c.setRequestProperty("Cache-Control","no-cache, no-store"); c.setRequestProperty("Pragma","no-cache");
         BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8)); String line; JSONObject best=null; long bestSeq=Long.MIN_VALUE;
-        while((line=br.readLine())!=null){ if(line.trim().isEmpty())continue; try{JSONObject m=new JSONObject(line); if(!"message".equals(m.optString("event")))continue; String packet=m.optString("message",""); if(!packet.startsWith("v1."))continue; JSONObject o=decodePacket(packet,secret); long seq=o.optLong("fleet_snapshot_sequence",o.optLong("snapshot_sequence",0)); if(best==null||seq>=bestSeq){best=o;bestSeq=seq;}}catch(Exception ignored){} }
+        while((line=br.readLine())!=null){ if(line.trim().isEmpty())continue; try{JSONObject m=new JSONObject(line); if(!"message".equals(m.optString("event")))continue; String packet=m.optString("message",""); if(!packet.startsWith("v1."))continue; JSONObject o=decodePacket(packet,secret); long s=seq(o); if(best==null||s>bestSeq){best=o;bestSeq=s;}}catch(Exception ignored){} }
         br.close(); return best;
     }
 
@@ -53,16 +56,23 @@ public class MainActivity extends Activity {
         try{
             String topic="wro-"+hex(sha("topic|"+secret)).substring(0,24);
             JSONObject o=findLatest(topic,secret,"30m"); if(o==null)o=findLatest(topic,secret,"2h"); if(o==null)throw new Exception("no valid snapshot");
-            o.put("__transport","ntfy"); o.put("__relay_ok",true); o.put("__relay_fetched_at",System.currentTimeMillis());
-            getSharedPreferences("wro_monitor",MODE_PRIVATE).edit().putString("last_state",o.toString()).putLong("last_fetch_ok",System.currentTimeMillis()).remove("last_error").apply();
+            long now=System.currentTimeMillis(); o.put("__transport","ntfy"); o.put("__relay_ok",true); o.put("__relay_fetched_at",now);
+            android.content.SharedPreferences prefs=getSharedPreferences("wro_monitor",MODE_PRIVATE); JSONObject current=null; String raw=prefs.getString("last_state",""); if(!raw.isEmpty()){try{current=new JSONObject(raw);}catch(Exception ignored){}}
+            android.content.SharedPreferences.Editor edit=prefs.edit().putLong("last_fetch_ok",now).remove("last_error"); if(newer(o,current))edit.putString("last_state",o.toString()); edit.apply();
         }catch(Exception e){getSharedPreferences("wro_monitor",MODE_PRIVATE).edit().putString("last_error",e.getClass().getSimpleName()+": "+e.getMessage()).apply();}
         finally{fetching.set(false);}
+    }
+
+    private void queueFetch(String secret){
+        if(secret==null||secret.length()<20||!fetchQueued.compareAndSet(false,true))return;
+        final String f=secret;
+        try{relayWorker.execute(()->{try{fetchAndStore(f);}finally{fetchQueued.set(false);}});}catch(RejectedExecutionException e){fetchQueued.set(false);}
     }
 
     private void triggerFetch(String secret){
         if(secret!=null&&secret.length()>=20){activeSecret=secret;getSharedPreferences("wro_monitor",MODE_PRIVATE).edit().putString("pair_secret",secret).apply();}
         String s=activeSecret;if(s.length()<20)s=getSharedPreferences("wro_monitor",MODE_PRIVATE).getString("pair_secret","");
-        if(s.length()>=20 && System.currentTimeMillis()-lastFetchStart>8000){final String f=s;relayWorker.execute(()->fetchAndStore(f));}
+        if(s.length()>=20 && System.currentTimeMillis()-lastFetchStart>8000)queueFetch(s);
     }
 
     public class Bridge {
